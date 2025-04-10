@@ -502,6 +502,54 @@ function confusionMatrix(outputs::AbstractArray{<:Any,1}, targets::AbstractArray
     return confusionMatrix(outputs_onehot, targets_onehot; weighted=weighted)
 end;
 
+# Funciones auxiliares para visualizar por pantalla la matriz de confusion y las metricas que se derivan de ella
+function printConfusionMatrix(outputs::AbstractArray{Bool,2}, targets::AbstractArray{Bool,2}; weighted::Bool=true)
+    (acc, errorRate, recall, specificity, precision, NPV, F1, confMatrix) = confusionMatrix(outputs, targets; weighted=weighted);
+    numClasses = size(confMatrix,1);
+    writeHorizontalLine() = (for i in 1:numClasses+1 print("--------") end; println(""); );
+    writeHorizontalLine();
+    print("\t| ");
+    if (numClasses==2)
+        println(" - \t + \t|");
+    else
+        print.("Cl. ", 1:numClasses, "\t| ");
+    end;
+    println("");
+    writeHorizontalLine();
+    for numClassTarget in 1:numClasses
+        # print.(confMatrix[numClassTarget,:], "\t");
+        if (numClasses==2)
+            print(numClassTarget == 1 ? " - \t| " : " + \t| ");
+        else
+            print("Cl. ", numClassTarget, "\t| ");
+        end;
+        print.(confMatrix[numClassTarget,:], "\t| ");
+        println("");
+        writeHorizontalLine();
+    end;
+    println("Accuracy: ", acc);
+    println("Error rate: ", errorRate);
+    println("Recall: ", recall);
+    println("Specificity: ", specificity);
+    println("Precision: ", precision);
+    println("Negative predictive value: ", NPV);
+    println("F1-score: ", F1);
+    return (acc, errorRate, recall, specificity, precision, NPV, F1, confMatrix);
+end;
+printConfusionMatrix(outputs::AbstractArray{<:Real,2}, targets::AbstractArray{Bool,2}; weighted::Bool=true) =  printConfusionMatrix(classifyOutputs(outputs), targets; weighted=weighted)
+
+
+
+printConfusionMatrix(outputs::AbstractArray{Bool,1},   targets::AbstractArray{Bool,1})                      = printConfusionMatrix(reshape(outputs, :, 1), reshape(targets, :, 1));
+printConfusionMatrix(outputs::AbstractArray{<:Real,1}, targets::AbstractArray{Bool,1}; threshold::Real=0.5) = printConfusionMatrix(outputs.>=threshold,    targets);
+
+printConfusionMatrix(outputs::AbstractArray{<:Any,1}, targets::AbstractArray{<:Any,1}, classes::AbstractArray{<:Any,1}; weighted::Bool=true) = printConfusionMatrix(oneHotEncoding(outputs, classes), oneHotEncoding(targets, classes); weighted=weighted);
+
+function printConfusionMatrix(outputs::AbstractArray{<:Any,1}, targets::AbstractArray{<:Any,1}; weighted::Bool=true)
+    classes = unique(vcat(targets, outputs));
+    printConfusionMatrix(oneHotEncoding(outputs, classes), oneHotEncoding(targets, classes); weighted=weighted);
+end;
+
 using SymDoME
 
 
