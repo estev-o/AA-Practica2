@@ -9,29 +9,35 @@
 using Statistics
 using Flux
 using Flux.Losses
-
+using StatsBase 
 
 function oneHotEncoding(feature::AbstractArray{<:Any,1}, classes::AbstractArray{<:Any,1})
-    numClasses = length(classes);
-    numFeatures= length(feature);
-    if numClasses<=2
-         targets = reshape(feature.==classes[1], :, 1);
-         return targets;
-    else
-        oneHot =BitArray{2}(undef, numFeatures, numClasses);
-        for numClass = 1:numClasses
-            oneHot[:,numClass] .= (feature.==classes[numClass]);
+    numClasses = length(classes)
+    numFeatures = length(feature)
+
+    ordered_classes = sort(classes) 
+
+    if numClasses == 1
+        return reshape(fill(true, numFeatures), :, 1) 
+    elseif numClasses == 2
+        oneHot = BitArray{2}(undef, numFeatures, 2)
+        oneHot[:, 1] .= (feature .== ordered_classes[1])
+        oneHot[:, 2] .= (feature .== ordered_classes[2])
+        return oneHot
+    else 
+        oneHot = BitArray{2}(undef, numFeatures, numClasses)
+        for (idxClass, currentClass) in enumerate(ordered_classes)
+            oneHot[:, idxClass] .= (feature .== currentClass)
         end
-        return oneHot;
+        return oneHot
     end
-end;
+end
 
 oneHotEncoding(feature::AbstractArray{<:Any,1}) = oneHotEncoding(feature, unique(feature))
 
-
 function oneHotEncoding(feature::AbstractArray{Bool,1})
-    return reshape(feature, :, 1)
-end;
+    return oneHotEncoding(feature, [false, true])
+end
 
 function calculateMinMaxNormalizationParameters(dataset::AbstractArray{<:Real,2})
     minValues = minimum(dataset, dims=1)
@@ -559,49 +565,48 @@ function trainClassDoME(trainingDataset::Tuple{AbstractArray{<:Real,2}, Abstract
     testInputs = Float64.(testInputs)
 
     _, _, _, model = dome(trainingInputs, trainingTargets; maximumNodes=maximumNodes)
-    return evaluateTree(model,testInputs);    
+    prediction_scores = evaluateTree(model, testInputs)
+    predicted_targets_bool = (prediction_scores .> 0.0)
+    return predicted_targets_bool
 end
 
 function trainClassDoME(trainingDataset::Tuple{AbstractArray{<:Real,2}, AbstractArray{Bool,2}}, testInputs::AbstractArray{<:Real,2}, maximumNodes::Int)
-    trainingInputs, trainingTargets = trainingDataset
-    numClasses = size(trainingTargets, 2)
-    if (numClasses==1)
-        trainingTargets=vec(trainingTargets)
-        return reshape(trainClassDoME((trainingInputs, trainingTargets), testInputs, maximumNodes), :, 1)
+    trainingInputs, trainingTargets_onehot = trainingDataset
+    numClasses = size(trainingTargets_onehot, 2)
+    numTestSamples = size(testInputs, 1)
+
+    if (numClasses<=1)
+        trainingTargets_bool = vec(trainingTargets_onehot)
+        return trainClassDoME((trainingInputs, trainingTargets_bool), testInputs, maximumNodes)
     else
-        matrix = Float64.(zeros(size(testInputs, 1), numClasses))
+        matrix_outputs = zeros(Float64, numTestSamples, numClasses)
         for i=1:numClasses
-            classTargets = trainingTargets[:, i] .== 1 
-            classResult = trainClassDoME((trainingInputs, classTargets), testInputs, maximumNodes)
-            matrix[:, i] = classResult 
+            classTargets_bool = trainingTargets_onehot[:, i] 
+            classResult_bool = trainClassDoME((trainingInputs, classTargets_bool), testInputs, maximumNodes)
+            matrix_outputs[:, i] = Float64.(classResult_bool)
         end
-        return matrix
+        return matrix_outputs
     end
 end;
 
 
 function trainClassDoME(trainingDataset::Tuple{AbstractArray{<:Real,2}, AbstractArray{<:Any,1}}, testInputs::AbstractArray{<:Real,2}, maximumNodes::Int)
-    trainingInputs, trainingTargets = trainingDataset
-    classes = unique(trainingTargets)
-    testOutputs = Array{eltype(trainingTargets),1}(undef, size(testInputs,1))
-    
-    testOutputsDoME = trainClassDoME((trainingInputs, oneHotEncoding(trainingTargets, classes)),testInputs, maximumNodes)
-    
-    testOutputsBool = classifyOutputs(testOutputsDoME; threshold=0)
-    
-    if length(classes) <= 2
-        testOutputsBool = vec(testOutputsBool)
-        testOutputs[testOutputsBool] .= classes[1]
-        if length(classes) == 2
-            testOutputs[.!testOutputsBool] .= classes[2]
-        end
-    else
-        for numClass in 1:length(classes)
-            testOutputs[testOutputsBool[:,numClass]] .= classes[numClass]
-        end
+    trainingInputs, trainingTargets_any = trainingDataset # trainingTargets_any es Vector{String}
+    numTestSamples = size(testInputs,1)
+    classes = sort(unique(trainingTargets_any))
+    positiveClass = classes[2] 
+    negativeClass = classes[1] 
+
+    trainingTargets_bool :: BitVector = (trainingTargets_any .== positiveClass)
+
+    predicted_targets_bool :: BitVector = trainClassDoME((trainingInputs, trainingTargets_bool), testInputs, maximumNodes)
+
+    testOutputs_string = Vector{String}(undef, numTestSamples)
+    for i in 1:numTestSamples
+        testOutputs_string[i] = predicted_targets_bool[i] ? positiveClass : negativeClass
     end
 
-    return testOutputs
+    return testOutputs_string 
 end
 
 
@@ -739,6 +744,11 @@ function ANNCrossValidation(topology::AbstractArray{<:Int,1},
             precision_exec[exec] = vpp
             vpn_exec[exec] = vpn
             f1_exec[exec] = f1
+            @assert size(conf_matrices_exec) == (numClasses, numClasses, numExecutions) "ANNCV Error: Tamaño inesperado de conf_matrices_exec ($(size(conf_matrices_exec))), se esperaba ($numClasses, $numClasses, $numExecutions)"
+            # Verificar que conf_matrix sea realmente una Matriz 2D
+            @assert typeof(conf_matrix) <: AbstractMatrix "ANNCV Error: conf_matrix no es una Matriz (tipo: $(typeof(conf_matrix)))"
+            @assert size(conf_matrix) == (numClasses, numClasses) "ANNCV Error: Tamaño inesperado de conf_matrix ($(size(conf_matrix))), se esperaba ($numClasses, $numClasses)"
+            @assert exec >= 1 && exec <= numExecutions "ANNCV Error: Índice de ejecución inválido (exec = $exec)"
             conf_matrices_exec[:, :, exec] = conf_matrix
         end
         
@@ -797,7 +807,9 @@ function modelCrossValidation(modelType::Symbol, modelHyperparameters::Dict,
         numExecutions = get(modelHyperparameters, "numExecutions", 50)
         maxEpochs = get(modelHyperparameters, "maxEpochs", 1000)
         maxEpochsVal = get(modelHyperparameters, "maxEpochsVal", 20)
-        return ANNCrossValidation(topology, dataset, crossValidationIndices;
+        inputs_f32 = Float32.(inputs)
+        dataset_f32 = (inputs_f32, targets_raw)
+        return ANNCrossValidation(topology, dataset_f32, crossValidationIndices;
                                   numExecutions=numExecutions,
                                   learningRate=learningRate,
                                   validationRatio=validationRatio,
