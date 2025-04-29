@@ -25,8 +25,19 @@ function cargar_imagenes_carpeta(carpeta)
                 img = load(archivo)
                 cv = channelview(img)
                 if ndims(cv) == 3 && size(cv, 1) == 3 # Asegurar RGB
-                     # Convertir a Float64 aquí para consistencia
-                    push!(imagenes, Float64.(cv))
+                    # Usar solo la mitad superior de la imagen
+                    mitad_filas = div(size(cv, 2), 2)
+                    cv_mitad_superior = cv[:, 1:mitad_filas, :]
+                    # Convertir a Float64 aquí para consistencia
+
+                    #
+                    #   MUY IMPORTANTE: Comentar o descomentar la siguientes dos líneas según
+                    #                   se quiera usar mitad de la imagen o entera.
+                    #
+
+                    push!(imagenes, Float64.(cv_mitad_superior))
+                    #push!(imagenes, Float64.(cv))
+                    
                 else
                     @warn "Ignorando imagen no RGB o con formato inesperado: $archivo"
                 end
